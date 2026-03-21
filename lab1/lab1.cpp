@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <climits>
+#include <string>
 
 std::vector<int> DEMAND = {0,7,6,3,0,2};
 #define INITIAL_NUMBER_OF_MACHINES 1
@@ -10,10 +11,15 @@ std::vector<int> DEMAND = {0,7,6,3,0,2};
 #define PER_MACHINE_COST 10
 #define STORAGE_COST 10
 
+bool USE_MEMOIZATION = true;
+
 int min_cost(
     int month,
     int warehouse,
     const std::vector<int>& demand,
+    std::vector<std::vector<int>>& dp,
+    std::vector<std::vector<bool>>& used,
+    bool use_memoization = true,
     int final_warehouse = -1,
     int storage_cost = STORAGE_COST,
     int delivery_cost = DELIVERY_COST) {
@@ -23,6 +29,10 @@ int min_cost(
             return 0;
         }
         return INT_MAX;
+    }
+
+    if (use_memoization && used[month][warehouse]) {
+        return dp[month][warehouse];
     }
 
     int best = INT_MAX;
@@ -43,7 +53,17 @@ int min_cost(
         }
         step_cost += storage_cost * next_warehouse;
 
-        int future_cost = min_cost(month + 1, next_warehouse, demand, final_warehouse, storage_cost, delivery_cost);
+        int future_cost = min_cost(
+            month + 1,
+            next_warehouse,
+            demand,
+            dp,
+            used,
+            use_memoization,
+            final_warehouse,
+            storage_cost,
+            delivery_cost
+        );
         if (future_cost == INT_MAX) {
             continue;
         }
@@ -54,6 +74,10 @@ int min_cost(
         }
     }
 
+    if (use_memoization) {
+        used[month][warehouse] = true;
+        dp[month][warehouse] = best;
+    }
     return best;
 }
 
@@ -61,6 +85,9 @@ int machines_num(
     int month,
     int warehouse,
     const std::vector<int>& demand,
+    std::vector<std::vector<int>>& dp,
+    std::vector<std::vector<bool>>& used,
+    bool use_memoization = true,
     int final_warehouse = -1,
     int storage_cost = STORAGE_COST,
     int delivery_cost = DELIVERY_COST) {
@@ -89,7 +116,17 @@ int machines_num(
         }
         step_cost += storage_cost * next_warehouse;
 
-        int future_cost = min_cost(month + 1, next_warehouse, demand, final_warehouse, storage_cost, delivery_cost);
+        int future_cost = min_cost(
+            month + 1,
+            next_warehouse,
+            demand,
+            dp,
+            used,
+            use_memoization,
+            final_warehouse,
+            storage_cost,
+            delivery_cost
+        );
         if (future_cost == INT_MAX) {
             continue;
         }
@@ -108,15 +145,45 @@ void minimize_cost(
     std::vector<int>& plan,
     int& total_cost,
     const std::vector<int>& demand,
+    bool use_memoization = true,
     int final_warehouse = -1,
     int storage_cost = STORAGE_COST,
     int delivery_cost = DELIVERY_COST) {
     int warehouse = INITIAL_NUMBER_OF_MACHINES;
-    total_cost = min_cost(0, warehouse, demand, final_warehouse, storage_cost, delivery_cost);
+    std::vector<std::vector<int>> dp(
+        demand.size() + 1,
+        std::vector<int>(WAREHOUSE_CAPACITY + 1, 0)
+    );
+    std::vector<std::vector<bool>> used(
+        demand.size() + 1,
+        std::vector<bool>(WAREHOUSE_CAPACITY + 1, false)
+    );
+
+    total_cost = min_cost(
+        0,
+        warehouse,
+        demand,
+        dp,
+        used,
+        use_memoization,
+        final_warehouse,
+        storage_cost,
+        delivery_cost
+    );
     plan.clear();
 
     for (int month = 0; month < demand.size(); month++) {
-        int order = machines_num(month, warehouse, demand, final_warehouse, storage_cost, delivery_cost);
+        int order = machines_num(
+            month,
+            warehouse,
+            demand,
+            dp,
+            used,
+            use_memoization,
+            final_warehouse,
+            storage_cost,
+            delivery_cost
+        );
         plan.push_back(order);
         warehouse = warehouse + order - demand[month];
     }
@@ -126,7 +193,7 @@ std::vector<int> task1(int final_warehouse = -1) {
     std::vector<int> plan;
     int total_cost = 0;
 
-    minimize_cost(plan, total_cost, DEMAND, final_warehouse);
+    minimize_cost(plan, total_cost, DEMAND, USE_MEMOIZATION, final_warehouse);
 
     std::cout << "Оптимальный план закупок "
               << (final_warehouse == -1 ? "без ограничения" : "с ограничением")
@@ -149,7 +216,7 @@ std::vector<int> task1(int final_warehouse = -1) {
 int task2(std::vector<int> base_plan = {}){
     int base_cost = 0;
     if (base_plan.empty()) {
-        minimize_cost(base_plan, base_cost, DEMAND, STORAGE_COST);
+        minimize_cost(base_plan, base_cost, DEMAND, USE_MEMOIZATION, -1, STORAGE_COST);
     }
 
     int left = STORAGE_COST;
@@ -158,7 +225,7 @@ int task2(std::vector<int> base_plan = {}){
     for (int cost = STORAGE_COST - 1; cost >= 0; cost--) {
         std::vector<int> current_plan;
         int current_cost = 0;
-        minimize_cost(current_plan, current_cost, DEMAND, cost);
+        minimize_cost(current_plan, current_cost, DEMAND, USE_MEMOIZATION, -1, cost);
 
         if (current_plan == base_plan) {
             left = cost;
@@ -170,7 +237,7 @@ int task2(std::vector<int> base_plan = {}){
     for (int cost = STORAGE_COST + 1; ; cost++) {
         std::vector<int> current_plan;
         int current_cost = 0;
-        minimize_cost(current_plan, current_cost, DEMAND, cost);
+        minimize_cost(current_plan, current_cost, DEMAND, USE_MEMOIZATION, -1, cost);
 
         if (current_plan == base_plan) {
             right = cost;
@@ -188,7 +255,7 @@ int task2(std::vector<int> base_plan = {}){
 int task3(std::vector<int> base_plan = {}){
     int base_cost = 0;
     if (base_plan.empty()) {
-        minimize_cost(base_plan, base_cost, DEMAND, STORAGE_COST, DELIVERY_COST);
+        minimize_cost(base_plan, base_cost, DEMAND, USE_MEMOIZATION, -1, STORAGE_COST, DELIVERY_COST);
     }
 
     int left = DELIVERY_COST;
@@ -213,7 +280,7 @@ int task3(std::vector<int> base_plan = {}){
     for (int cost = DELIVERY_COST - 1; cost >= 0; cost--) {
         std::vector<int> current_plan;
         int current_cost = 0;
-        minimize_cost(current_plan, current_cost, DEMAND, STORAGE_COST, cost);
+        minimize_cost(current_plan, current_cost, DEMAND, USE_MEMOIZATION, -1, STORAGE_COST, cost);
 
         if (current_plan == base_plan) {
             left = cost;
@@ -264,8 +331,20 @@ void task4(int final_warehouse) {
 
 }
 
-int main(){
-    std::cout << "================ Задача №3 ================" << std::endl;
+int main(int argc, char* argv[]){
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--memo") {
+            USE_MEMOIZATION = true;
+        } else if (arg == "--no-memo") {
+            USE_MEMOIZATION = false;
+        } else {
+            std::cout << "Неизвестный аргумент: " << arg << std::endl;
+            std::cout << "Использование: ./lab1 [--memo | --no-memo]" << std::endl;
+            return 1;
+        }
+    }
+
     std::cout << "\n" << "================ Подзадача №1 ================" << std::endl;
     auto plan = task1();
 

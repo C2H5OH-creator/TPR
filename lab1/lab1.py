@@ -1,223 +1,328 @@
 from __future__ import annotations
 
-import subprocess
-import tempfile
-from dataclasses import dataclass
-from pathlib import Path
+import sys
 
-MONTHS = 6
 DEMAND = [0, 7, 6, 3, 0, 2]
-INITIAL_STOCK = 1
+INITIAL_NUMBER_OF_MACHINES = 1
+WAREHOUSE_CAPACITY = 20
 MAX_ORDER = 5
-CAPACITY = 20
-LP_SOLVE = "lp_solve"
+DELIVERY_COST = 50
+PER_MACHINE_COST = 10
+STORAGE_COST = 10
+
+USE_MEMOIZATION = True
 
 
-@dataclass(frozen=True)
-class Solution:
-    total_cost: float
-    orders: tuple[int, ...]
-    trips: tuple[int, ...]
-    stocks_before: tuple[int, ...]
-    stocks_after: tuple[int, ...]
+def min_cost(
+    month: int,
+    warehouse: int,
+    demand: list[int],
+    dp: list[list[int]],
+    used: list[list[bool]],
+    use_memoization: bool = True,
+    final_warehouse: int = -1,
+    storage_cost: int = STORAGE_COST,
+    delivery_cost: int = DELIVERY_COST,
+) -> int:
+    if month == len(demand):
+        if final_warehouse == -1 or warehouse == final_warehouse:
+            return 0
+        return sys.maxsize
 
+    if use_memoization and used[month][warehouse]:
+        return dp[month][warehouse]
 
-def build_lp_model(
-    storage_cost: float,
-    fixed_trip_cost: float,
-    final_stock: int | None = None,
-) -> str:
-    lines: list[str] = []
+    best = sys.maxsize
 
-    objective_terms = []
-    for month in range(1, MONTHS + 1):
-        objective_terms.append(f"{fixed_trip_cost} y{month}")
-        objective_terms.append(f"10 u{month}")
-        objective_terms.append(f"{storage_cost} s{month + 1}")
-    lines.append("min: " + " + ".join(objective_terms) + ";")
-
-    lines.append(f"s1 = {INITIAL_STOCK};")
-
-    for month, demand in enumerate(DEMAND, start=1):
-        next_month = month + 1
-        lines.append(f"s{next_month} = s{month} + u{month} - {demand};")
-        lines.append(f"s{month} + u{month} >= {demand};")
-        lines.append(f"u{month} <= {MAX_ORDER} y{month};")
-        lines.append(f"0 <= s{month} <= {CAPACITY};")
-        lines.append(f"0 <= u{month} <= {MAX_ORDER};")
-        lines.append(f"0 <= y{month} <= 1;")
-
-    lines.append(f"0 <= s{MONTHS + 1} <= {CAPACITY};")
-
-    if final_stock is not None:
-        lines.append(f"s{MONTHS + 1} = {final_stock};")
-
-    for month in range(1, MONTHS + 1):
-        lines.append(f"int u{month};")
-        lines.append(f"bin y{month};")
-
-    return "\n".join(lines) + "\n"
-
-
-def parse_lp_solve_output(output: str) -> Solution:
-    values: dict[str, float] = {}
-    objective = None
-
-    for raw_line in output.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if line.startswith("Value of objective function:"):
-            objective = float(line.split(":", 1)[1].strip())
+    for order in range(MAX_ORDER + 1):
+        if warehouse + order < demand[month]:
             continue
 
-        parts = line.split()
-        if len(parts) == 2:
-            try:
-                values[parts[0]] = float(parts[1])
-            except ValueError:
-                pass
+        next_warehouse = warehouse + order - demand[month]
+        if next_warehouse > WAREHOUSE_CAPACITY:
+            continue
 
-    if objective is None:
-        raise RuntimeError(f"Не удалось разобрать вывод lp_solve:\n{output}")
+        step_cost = 0
+        if order > 0:
+            step_cost += delivery_cost + PER_MACHINE_COST * order
+        step_cost += storage_cost * next_warehouse
 
-    orders = tuple(int(round(values[f"u{i}"])) for i in range(1, MONTHS + 1))
-    trips = tuple(int(round(values[f"y{i}"])) for i in range(1, MONTHS + 1))
-    stocks = tuple(int(round(values[f"s{i}"])) for i in range(1, MONTHS + 2))
+        future_cost = min_cost(
+            month + 1,
+            next_warehouse,
+            demand,
+            dp,
+            used,
+            use_memoization,
+            final_warehouse,
+            storage_cost,
+            delivery_cost,
+        )
+        if future_cost == sys.maxsize:
+            continue
 
-    return Solution(
-        total_cost=objective,
-        orders=orders,
-        trips=trips,
-        stocks_before=stocks[:-1],
-        stocks_after=stocks[1:],
+        total = step_cost + future_cost
+        if total < best:
+            best = total
+
+    if use_memoization:
+        used[month][warehouse] = True
+        dp[month][warehouse] = best
+
+    return best
+
+
+def machines_num(
+    month: int,
+    warehouse: int,
+    demand: list[int],
+    dp: list[list[int]],
+    used: list[list[bool]],
+    use_memoization: bool = True,
+    final_warehouse: int = -1,
+    storage_cost: int = STORAGE_COST,
+    delivery_cost: int = DELIVERY_COST,
+) -> int:
+    if month == len(demand):
+        return 0
+
+    best = sys.maxsize
+    best_order = 0
+
+    for order in range(MAX_ORDER + 1):
+        if warehouse + order < demand[month]:
+            continue
+
+        next_warehouse = warehouse + order - demand[month]
+        if next_warehouse > WAREHOUSE_CAPACITY:
+            continue
+
+        step_cost = 0
+        if order > 0:
+            step_cost += delivery_cost + PER_MACHINE_COST * order
+        step_cost += storage_cost * next_warehouse
+
+        future_cost = min_cost(
+            month + 1,
+            next_warehouse,
+            demand,
+            dp,
+            used,
+            use_memoization,
+            final_warehouse,
+            storage_cost,
+            delivery_cost,
+        )
+        if future_cost == sys.maxsize:
+            continue
+
+        total = step_cost + future_cost
+        if total < best:
+            best = total
+            best_order = order
+
+    return best_order
+
+
+def minimize_cost(
+    plan: list[int],
+    demand: list[int],
+    use_memoization: bool = True,
+    final_warehouse: int = -1,
+    storage_cost: int = STORAGE_COST,
+    delivery_cost: int = DELIVERY_COST,
+) -> int:
+    warehouse = INITIAL_NUMBER_OF_MACHINES
+    dp = [[0] * (WAREHOUSE_CAPACITY + 1) for _ in range(len(demand) + 1)]
+    used = [[False] * (WAREHOUSE_CAPACITY + 1) for _ in range(len(demand) + 1)]
+
+    total_cost = min_cost(
+        0,
+        warehouse,
+        demand,
+        dp,
+        used,
+        use_memoization,
+        final_warehouse,
+        storage_cost,
+        delivery_cost,
+    )
+    plan.clear()
+
+    for month in range(len(demand)):
+        order = machines_num(
+            month,
+            warehouse,
+            demand,
+            dp,
+            used,
+            use_memoization,
+            final_warehouse,
+            storage_cost,
+            delivery_cost,
+        )
+        plan.append(order)
+        warehouse = warehouse + order - demand[month]
+
+    return total_cost
+
+
+def task1(final_warehouse: int = -1) -> list[int]:
+    plan: list[int] = []
+    total_cost = minimize_cost(plan, DEMAND, USE_MEMOIZATION, final_warehouse)
+
+    print(
+        "Оптимальный план закупок "
+        + ("без ограничения" if final_warehouse == -1 else "с ограничением")
+        + " на количество станков на последнем месяце",
+        end="",
     )
 
+    if final_warehouse != -1:
+        print(f" ({final_warehouse})", end="")
 
-def solve_problem(
-    storage_cost: float = 10,
-    fixed_trip_cost: float = 50,
-    final_stock: int | None = None,
-) -> Solution:
-    model = build_lp_model(storage_cost, fixed_trip_cost, final_stock)
+    print(": ", end="")
 
-    with tempfile.NamedTemporaryFile("w", suffix=".lp", delete=False) as handle:
-        handle.write(model)
-        lp_path = Path(handle.name)
+    for order in plan:
+        print(order, end=" ")
+    print(f"\nОбщая стоимость: {total_cost}")
 
-    try:
-        result = subprocess.run(
-            [LP_SOLVE, str(lp_path)],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    finally:
-        lp_path.unlink(missing_ok=True)
-
-    return parse_lp_solve_output(result.stdout)
+    return plan
 
 
-def same_plan(left: Solution, right: Solution) -> bool:
-    return left.orders == right.orders and left.stocks_after == right.stocks_after
+def task2(base_plan: list[int] | None = None) -> int:
+    if base_plan is None:
+        base_plan = []
 
+    if not base_plan:
+        minimize_cost(base_plan, DEMAND, USE_MEMOIZATION, -1, STORAGE_COST)
 
-def find_parameter_range(
-    base_solution: Solution,
-    base_storage_cost: int,
-    base_fixed_trip_cost: int,
-    parameter: str,
-    lower_limit: int,
-    upper_limit: int,
-    final_stock: int | None = None,
-) -> tuple[int, int]:
-    if parameter not in {"storage_cost", "fixed_trip_cost"}:
-        raise ValueError("parameter must be 'storage_cost' or 'fixed_trip_cost'")
+    left = STORAGE_COST
+    right = STORAGE_COST
 
-    def solve_with(value: int) -> Solution:
-        storage_cost = value if parameter == "storage_cost" else base_storage_cost
-        fixed_trip_cost = (
-            value if parameter == "fixed_trip_cost" else base_fixed_trip_cost
-        )
-        return solve_problem(storage_cost, fixed_trip_cost, final_stock)
+    for cost in range(STORAGE_COST - 1, -1, -1):
+        current_plan: list[int] = []
+        minimize_cost(current_plan, DEMAND, USE_MEMOIZATION, -1, cost)
 
-    min_value = (
-        base_storage_cost if parameter == "storage_cost" else base_fixed_trip_cost
-    )
-    max_value = min_value
-
-    for value in range(min_value - 1, lower_limit - 1, -1):
-        if same_plan(base_solution, solve_with(value)):
-            min_value = value
+        if current_plan == base_plan:
+            left = cost
         else:
             break
 
-    for value in range(max_value + 1, upper_limit + 1):
-        if same_plan(base_solution, solve_with(value)):
-            max_value = value
+    cost = STORAGE_COST + 1
+    while True:
+        current_plan = []
+        minimize_cost(current_plan, DEMAND, USE_MEMOIZATION, -1, cost)
+
+        if current_plan == base_plan:
+            right = cost
+            cost += 1
         else:
             break
 
-    return min_value, max_value
+    print(f"Границы изменения стоимости хранения: [{left}, {right}]")
+    return 0
 
 
-def print_solution(title: str, solution: Solution) -> None:
-    print(title)
-    print(f"Минимальная стоимость: {solution.total_cost:.0f}")
-    print("Месяц | Спрос | Запас до | Заказ | Рейс | Запас после")
-    for month in range(MONTHS):
-        print(
-            f"{month + 1:5d} |"
-            f" {DEMAND[month]:5d} |"
-            f" {solution.stocks_before[month]:8d} |"
-            f" {solution.orders[month]:5d} |"
-            f" {solution.trips[month]:4d} |"
-            f" {solution.stocks_after[month]:11d}"
+def task3(base_plan: list[int] | None = None) -> int:
+    if base_plan is None:
+        base_plan = []
+
+    if not base_plan:
+        minimize_cost(
+            base_plan,
+            DEMAND,
+            USE_MEMOIZATION,
+            -1,
+            STORAGE_COST,
+            DELIVERY_COST,
         )
+
+    left = DELIVERY_COST
+    right = DELIVERY_COST
+
+    total_demand = 0
+    for value in DEMAND:
+        total_demand += value
+
+    required = total_demand - INITIAL_NUMBER_OF_MACHINES
+    min_trips = (required + MAX_ORDER - 1) // MAX_ORDER
+
+    base_trips = 0
+    for order in base_plan:
+        if order > 0:
+            base_trips += 1
+
+    for cost in range(DELIVERY_COST - 1, -1, -1):
+        current_plan: list[int] = []
+        minimize_cost(current_plan, DEMAND, USE_MEMOIZATION, -1, STORAGE_COST, cost)
+
+        if current_plan == base_plan:
+            left = cost
+        else:
+            break
+
+    cost = DELIVERY_COST + 1
+    while True:
+        if base_trips == min_trips:
+            print(
+                "Верхняя граница отсутствует: базовый план использует "
+                f"{min_trips} рейса(ов), это минимально возможное число рейсов."
+            )
+        right = -1
+        break
+
+        current_plan = []
+        minimize_cost(current_plan, DEMAND, USE_MEMOIZATION, -1, STORAGE_COST, cost)
+
+        if current_plan == base_plan:
+            right = cost
+            cost += 1
+        else:
+            break
+
+    print(f"Границы изменения постоянных затрат на рейс: [{left}, {right}]")
+    return 0
+
+
+def task4(final_warehouse: int) -> None:
+    plan = task1(final_warehouse)
+    remains: list[int] = []
+    for i in range(len(plan)):
+        remains.append(plan[i] - DEMAND[i])
+
+    print("Остатки станков в начале каждого месяца: ", end="")
+    for remain in remains:
+        print(remain, end=" ")
     print()
 
 
-def main() -> None:
-    base_storage_cost = 10
-    base_fixed_trip_cost = 50
+def main() -> int:
+    global USE_MEMOIZATION
 
-    base_solution = solve_problem(base_storage_cost, base_fixed_trip_cost)
-    print_solution("Базовая задача", base_solution)
+    for arg in sys.argv[1:]:
+        if arg == "--memo":
+            USE_MEMOIZATION = True
+        elif arg == "--no-memo":
+            USE_MEMOIZATION = False
+        else:
+            print(f"Неизвестный аргумент: {arg}")
+            print("Использование: ./lab1.py [--memo | --no-memo]")
+            return 1
 
-    storage_range = find_parameter_range(
-        base_solution=base_solution,
-        base_storage_cost=base_storage_cost,
-        base_fixed_trip_cost=base_fixed_trip_cost,
-        parameter="storage_cost",
-        lower_limit=0,
-        upper_limit=100,
-    )
-    print(
-        "Диапазон стоимости хранения, в котором базовый план остается оптимальным: "
-        f"[{storage_range[0]}, {storage_range[1]}]"
-    )
+    print("\n================ Подзадача №1 ================")
+    plan = task1()
 
-    fixed_range = find_parameter_range(
-        base_solution=base_solution,
-        base_storage_cost=base_storage_cost,
-        base_fixed_trip_cost=base_fixed_trip_cost,
-        parameter="fixed_trip_cost",
-        lower_limit=0,
-        upper_limit=200,
-    )
-    print(
-        "Диапазон постоянных затрат на рейс, в котором базовый план остается оптимальным: "
-        f"[{fixed_range[0]}, {fixed_range[1]}]"
-    )
-    print()
+    print("\n================ Подзадача №2 ================")
+    task2(plan)
 
-    final_stock_solution = solve_problem(
-        storage_cost=base_storage_cost,
-        fixed_trip_cost=base_fixed_trip_cost,
-        final_stock=2,
-    )
-    print_solution("Задача с конечным запасом 2 станка", final_stock_solution)
+    print("\n================ Подзадача №3 ================")
+    task3(plan)
+
+    print("\n================ Подзадача №4 ================")
+    task4(2)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
