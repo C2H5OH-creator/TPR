@@ -1,0 +1,8 @@
+dev/
+*.aux
+*.log
+*.out
+*.fls
+*.toc
+*.fdb_latexmk
+*.data.minted
