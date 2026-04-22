@@ -7,7 +7,7 @@ solvers.options["show_progress"] = False
 # =========================
 # РЕШЕНИЕ ЗАДАЧИ
 # =========================
-def solve_problem(A1a, A1b, A2a, A2b, cost_b=5.3):
+def solve_problem(A1a, A1b, A2a, A2b, cost_b1=2.0, cost_b2=5.3):
 
     # порядок переменных:
     # [x11a, x12a, x21a, x22a, x11b, x12b, x21b, x22b, y11, y12, y21, y22]
@@ -28,10 +28,10 @@ def solve_problem(A1a, A1b, A2a, A2b, cost_b=5.3):
             5.3,
             2,
             5.3,
-            2,
-            cost_b,
-            2,
-            cost_b,
+            cost_b1,
+            cost_b2,
+            cost_b1,
+            cost_b2,
             0,
             0,
             0,
@@ -182,17 +182,21 @@ print("\n=== АНАЛИЗ ЦЕЛЕВОЙ ФУНКЦИИ ===")
 A1a = A2a = 10000
 A1b = A2b = 10000
 
-cost_b = 5.3
+cost_b1 = 2.0
+cost_b2 = 5.3
 
 for step in range(50):
-    x, Z = solve_problem(A1a, A1b, A2a, A2b, cost_b)
+    x, Z = solve_problem(A1a, A1b, A2a, A2b, cost_b1, cost_b2)
     y_sum = get_y_sum(x)
 
-    print(f"\nШаг {step}: cost_b={round(cost_b, 2)}")
+    print(
+        f"\nШаг {step}: cost_b1={round(cost_b1, 2)}, cost_b2={round(cost_b2, 2)}"
+    )
     print("Замещение:", round(y_sum, 2))
 
     if y_sum >= 100:
         print(">>> Появилось замещение")
         break
 
-    cost_b += 0.2
+    cost_b1 += 0.2
+    cost_b2 += 0.2
